@@ -172,19 +172,25 @@ function _markHandlersToBeCalled(obj: any, prop: string | symbol | number, newVa
   }
 }
 
+class InfiniteLoopError extends Error {}
+
 // To prevent infinite loops
 const handlerCallStack: any[] = [];
 function _callHandlers() {
   for (const handler of _handlersToBeCalled) {
     try {
       if (handlerCallStack.some(h => h === handler)) {
-        throw Error("Congrats genius, you created an infinite loop.");
+        throw new InfiniteLoopError("Congrats genius, you created an infinite loop.");
       }
 
       handlerCallStack.push(handler);
       handler();
     } catch (e) {
-      console.error(e);
+      if (e instanceof InfiniteLoopError) {
+        throw e;
+      } else {
+        console.error(e);
+      }
     } finally {
       handlerCallStack.pop();
     }
@@ -211,8 +217,8 @@ function _resubscribeHandlersRecursive(obj: any, classesToProxify: any[], cache:
   }
 }
 
-let lastValidProxy: any = null;
-let lastProp: any = '';
+let _lastValidProxy: any = null;
+let _lastProp: any = '';
 
 function _proxifyInternal(obj: any, parent: object | null, classesToProxify: any[]) {
   if (obj[hidden]) {
@@ -254,6 +260,18 @@ function _proxifyInternal(obj: any, parent: object | null, classesToProxify: any
           }
           const d = _getRecursivePropDescriptor(receiver, p)
           if (d && (d.set || d.get)) {
+            // TODO: setters can have side effects, like calmped values etc
+            // In these cases a new value that is different from the old one
+            // could result in no change in the actual value the accessor uses.
+            // This is, as of yet, not taken into account here and as long as
+            // the old value is different than the new one, callbacks are called.
+            // The reason is that the aforementioned side effects can be very
+            // extreme. For example a setter have take an object and mutate
+            // its internal value instead of replacing it, which could make
+            // any kind of comparison after it has been called pointless
+            // unless the old value was deep copied (an expensive operation).
+            // Leaving this here as a reminder in case I decide to try
+            // solving this in the future.
 
             // If property is an accessor property, don't proxify.
             // Only data properties should proxify.
@@ -287,8 +305,8 @@ function _proxifyInternal(obj: any, parent: object | null, classesToProxify: any
         }
       },
       get: (target, p, receiver) => {
-        lastValidProxy = receiver;
-        lastProp = p;
+        _lastValidProxy = receiver;
+        _lastProp = p;
         return Reflect.get(target, p, receiver);
       },
       // Just don't use define property. Why bother making it reactive.
@@ -334,10 +352,18 @@ function _subscribeInternal<T>(getTarget: () => T, callback: () => void, subscri
   let found = false;
   _lastFound = false;
 
+  // Initialize proxy tracker
+  _lastValidProxy = null;
+  _lastProp = '';
+
   try {
     getTarget();
     found = true;
     _lastFound = true;
+
+    if (_lastValidProxy === null) {
+      throw Error("State is not proxified. Bitch");
+    }
   } catch (e) {
     if (!(e instanceof TypeError)) {
       throw e;
@@ -345,8 +371,8 @@ function _subscribeInternal<T>(getTarget: () => T, callback: () => void, subscri
   }
 
   // Initialize subscription data
-  const obj = lastValidProxy;
-  const prop = lastProp;
+  const obj = _lastValidProxy;
+  const prop = _lastProp;
   const internalCallback: (() => void) = () => {
     // Unsubscribe
     const {obj, prop, internalCallback} = subscriptionData;
@@ -367,7 +393,9 @@ function _subscribeInternal<T>(getTarget: () => T, callback: () => void, subscri
     _subscribeInternal(getTarget, callback, subscriptionData);
 
     // Call callback (if appropriate)
-    if (found || _lastFound) callback();
+    if (found || _lastFound) {
+      callback();
+    }
   };
   (internalCallback as any).update = () => {
     // Just unsubscribe and resubscribe without calling callback
@@ -417,38 +445,37 @@ type Destructor = (() => void);
 type DependencyList = readonly unknown[];
 type AnyActionArg = [] | [any];
 type ActionDispatch<ActionArg extends AnyActionArg> = (...args: ActionArg) => void;
-const createUseSubscribeHook = (
+const createReactHook = (
   useEffect: (effect: EffectCallback, deps?: DependencyList) => void,
   useReducer: <S, A extends AnyActionArg>(reducer: (prevState: S, ...args: A) => S, initialState: S) => [S, ActionDispatch<A>],
 ) => {
   return (
     getTarget: <T>() => T,
     /** If it returns the value `false` it doesn't rerender */
-    callback: () => boolean | void
+    callback?: () => boolean | void
   ) => {
     const [, forceUpdate] = useReducer(x => x + 1, 0);
     useEffect(() => {
       return subscribe(getTarget, () => {
-        const result = callback();
+        const result = callback?.();
         if (result !== false) {
           forceUpdate();
         }
       });
     }, []);
   }
-}
+};
 
 export {
   proxify,
   subscribe,
-  createUseSubscribeHook
+  createReactHook
 }
 
 
 // (Intended) Features
 // * doesn't batch :(
 // * no listener arguments (User keeping track of old values always works better)
-// * handlers run after change is committed (* but before set trap returns)
 // * handlers run bottom to top
 // * illegal mutations throw errors! (Can't react to a value change and change the value in the reaction)
 // * can handle cyclical structures
