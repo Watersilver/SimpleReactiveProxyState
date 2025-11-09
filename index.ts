@@ -187,6 +187,7 @@ function _callHandlers() {
       handler();
     } catch (e) {
       if (e instanceof InfiniteLoopError) {
+        _handlersToBeCalled.clear();
         throw e;
       } else {
         console.error(e);
@@ -233,6 +234,9 @@ function _proxifyInternal(obj: any, parent: object | null, classesToProxify: any
     original: obj,
     handlers: {}
   };
+  if (Array.isArray(obj)) {
+    obj[hidden as any].length = obj.length;
+  }
   if (parent) {
     obj[hidden].parents.push(parent);
     obj[hidden].parents = [...new Set(obj[hidden].parents)];
@@ -246,6 +250,7 @@ function _proxifyInternal(obj: any, parent: object | null, classesToProxify: any
       // }
       set: (target, p, newValue, receiver) => {
         const oldValue = target[p];
+
         const isOldValueProxified = _isProxifiable(oldValue, classesToProxify) && oldValue[hidden];
 
         if (_isProxifiable(newValue, classesToProxify)) {
@@ -287,6 +292,16 @@ function _proxifyInternal(obj: any, parent: object | null, classesToProxify: any
           // Basically if receiver isn't used setters and getters don't trap the members they use.
           return Reflect.set(target, p, newValue, receiver);
         } finally {
+          // Mark length here if it changed
+          if (Array.isArray(target)) {
+            if (p !== "length") {
+              if (target[hidden as any].length !== target.length) {
+                _setHandlersToBeCalled(target, 'length');
+              }
+            }
+            target[hidden as any].length = target.length;
+          }
+
           if (markedAny) {
             _markAncestorHandlersToBeCalled(receiver);
           }
