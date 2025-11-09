@@ -156,12 +156,40 @@ const tests = [
 
       unsubInfiloop();
     },
+    disabled: false,
     title: 'cyclic and refs',
     expectedErrorContains: 'infinite loop'
+  }, {
+    test: () => {
+      const c = proxify({
+        arr: [3]
+      } as {
+        arr?: number[];
+      });
+
+      delete c.arr;
+
+      let i = 0;
+      subscribe(() => c.arr!.length, () => {
+        i++;
+      });
+
+      c.arr = [3];
+      c.arr.push(2, 22);
+      c.arr[2] = 4;
+      c.arr.pop();
+      c.arr.length = 0;
+
+      if (i !== 5) {
+        throw Error(":(");
+      }
+    },
+    title: 'array'
   }
 ];
 
 for (const test of tests) {
+  if (test.disabled) continue;
   try {
     console.info("Running test: \"" + test.title + '"');
     try {
