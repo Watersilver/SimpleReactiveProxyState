@@ -1,5 +1,6 @@
 const hidden: unique symbol = Symbol('hidden');
 
+
 function _isProxifiable(obj: any, classesToProxify: Function[]) {
   return !!obj && typeof obj === 'object' &&
   (
@@ -20,7 +21,9 @@ function _getRecursivePropDescriptor(obj: any, prop: PropertyKey) {
   return desc;
 }
 
-const _handlersToBeCalled: Set<() => void> = new Set();
+let _currentHandlersToBeCalled: Set<() => void> = new Set();
+const _handlersToBeCalledStack: Set<() => void>[] = [];
+let _handlersToBeCalledIndex = 0;
 
 // To manage cyclic structures
 const _changesCache: Map<any, boolean> = new Map();
@@ -29,7 +32,7 @@ function _setHandlersToBeCalled(obj: any, key: string | symbol | number) {
   let handlersSet = 0;
   if (obj[hidden].handlers[key]) {
     for (const handler of obj[hidden].handlers[key]) {
-      _handlersToBeCalled.add(handler);
+      _currentHandlersToBeCalled.add(handler);
       handlersSet++;
     }
   }
@@ -126,6 +129,9 @@ function _markHandlersToBeCalled(obj: any, prop: string | symbol | number, newVa
             _setHandlersToBeCalled(oldValue, i);
             valueChanged = true;
           }
+          if (oldValue.length !== newValue.length) {
+            _setHandlersToBeCalled(oldValue, 'length');
+          }
         } else {
           const keys = [...Object.getOwnPropertyNames(oldValue), ...Object.getOwnPropertySymbols(oldValue)];
           let newKeys = [...Object.getOwnPropertyNames(newValue), ...Object.getOwnPropertySymbols(newValue)];
@@ -177,9 +183,16 @@ class InfiniteLoopError extends Error {}
 // To prevent infinite loops
 const handlerCallStack: any[] = [];
 function _callHandlers() {
-  for (const handler of _handlersToBeCalled) {
+  // Store set of handlers we're about to call
+  const htbc = _currentHandlersToBeCalled;
+
+  // Prepare new set of handlers to call in case state changes within current handlers
+  _handlersToBeCalledIndex++;
+  _currentHandlersToBeCalled = _handlersToBeCalledStack[_handlersToBeCalledIndex] || new Set();
+  _handlersToBeCalledStack[_handlersToBeCalledIndex] = _currentHandlersToBeCalled;
+  for (const handler of htbc) {
     try {
-      if (handlerCallStack.some(h => h === handler)) {
+      if (handlerCallStack.some(h => h.original === (handler as any).original)) {
         throw new InfiniteLoopError("Congrats genius, you created an infinite loop.");
       }
 
@@ -187,7 +200,11 @@ function _callHandlers() {
       handler();
     } catch (e) {
       if (e instanceof InfiniteLoopError) {
-        _handlersToBeCalled.clear();
+        // Handlers will stop due to error, return to previous set of handlers
+        _handlersToBeCalledIndex--;
+        _currentHandlersToBeCalled = htbc;
+        htbc.clear();
+
         throw e;
       } else {
         console.error(e);
@@ -196,7 +213,10 @@ function _callHandlers() {
       handlerCallStack.pop();
     }
   }
-  _handlersToBeCalled.clear();
+  // Handlers completed, return to previous set of handlers
+  _handlersToBeCalledIndex--;
+  _currentHandlersToBeCalled = htbc;
+  htbc.clear();
 }
 
 function _resubscribeHandlersRecursive(obj: any, classesToProxify: any[], cache: Set<any>) {
@@ -427,6 +447,7 @@ function _subscribeInternal<T>(getTarget: () => T, callback: () => void, subscri
     // Resubscribe
     _subscribeInternal(getTarget, callback, subscriptionData);
   };
+  (internalCallback as any).original = callback;
 
   if (!obj[hidden].handlers[prop]) {
     obj[hidden].handlers[prop] = [];
@@ -464,8 +485,8 @@ const createReactHook = (
   useEffect: (effect: EffectCallback, deps?: DependencyList) => void,
   useReducer: <S, A extends AnyActionArg>(reducer: (prevState: S, ...args: A) => S, initialState: S) => [S, ActionDispatch<A>],
 ) => {
-  return (
-    getTarget: <T>() => T,
+  return <T>(
+    getTarget: () => T,
     /** If it returns the value `false` it doesn't rerender */
     callback?: () => boolean | void
   ) => {
