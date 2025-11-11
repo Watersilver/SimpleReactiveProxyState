@@ -152,13 +152,19 @@ const tests = [
         b.b.c.a++;
       });
 
-      b.b.c.a++;
-
-      unsubInfiloop();
+      try {
+        b.b.c.a++;
+      } catch (e) {
+        unsubInfiloop();
+        if (e instanceof Error && e.message.includes("infinite loop")) {
+          console.log('Infinite loop caught')
+        } else {
+          throw e;
+        }
+      }
     },
     disabled: false,
-    title: 'cyclic and refs',
-    expectedErrorContains: 'infinite loop'
+    title: 'cyclic and refs'
   }, {
     test: () => {
       const c = proxify({
@@ -183,6 +189,13 @@ const tests = [
       if (i !== 5) {
         throw Error(":(");
       }
+      i = 5;
+
+      c.arr = [3,6];
+
+      if (i !== 6) {
+        throw Error("oh man, crap");
+      }
     },
     title: 'array'
   }
@@ -192,15 +205,7 @@ for (const test of tests) {
   if (test.disabled) continue;
   try {
     console.info("Running test: \"" + test.title + '"');
-    try {
-      test.test();
-    } catch (e) {
-      if (test.expectedErrorContains && e instanceof Error && e.message.includes(test.expectedErrorContains)) {
-        console.log("Expected error: \"" + e.message + '"');
-      } else {
-        throw e;
-      }
-    }
+    test.test();
     console.info("Test: \"" + test.title + '" was successful');
   } catch (e) {
     console.error("test: \"" + test.title + "\" failed");
