@@ -184,16 +184,17 @@ const tests = [
       c.arr.push(2, 22);
       c.arr[2] = 4;
       c.arr.pop();
+      c.arr.splice(1,1);
       c.arr.length = 0;
 
-      if (i !== 5) {
+      if (i !== 6) {
         throw Error(":(");
       }
-      i = 5;
+      i = 0;
 
       c.arr = [3,6];
 
-      if (i !== 6) {
+      if (i !== 1) {
         throw Error("oh man, crap");
       }
     },
