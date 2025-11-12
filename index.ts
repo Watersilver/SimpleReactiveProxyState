@@ -479,26 +479,29 @@ function subscribe<T>(getTarget: () => T, callback: () => void) {
 type EffectCallback = () => void | Destructor;
 type Destructor = (() => void);
 type DependencyList = readonly unknown[];
-type AnyActionArg = [] | [any];
-type ActionDispatch<ActionArg extends AnyActionArg> = (...args: ActionArg) => void;
+type SetStateAction<S> = S | ((prevState: S) => S);
+type Dispatch<A> = (value: A) => void;
+// function useState<S = undefined>(): [S | undefined, Dispatch<SetStateAction<S | undefined>>];
 const createReactHook = (
   useEffect: (effect: EffectCallback, deps?: DependencyList) => void,
-  useReducer: <S, A extends AnyActionArg>(reducer: (prevState: S, ...args: A) => S, initialState: S) => [S, ActionDispatch<A>],
+  useState: <S>(initialState: S | (() => S)) => [S, Dispatch<SetStateAction<S>>]
 ) => {
-  return <T>(
+  return <T, S>(
     getTarget: () => T,
-    /** If it returns the value `false` it doesn't rerender */
-    callback?: () => boolean | void
-  ) => {
-    const [, forceUpdate] = useReducer(x => x + 1, 0);
+    /** Returns react state that will be used.
+     * 
+     * WARNING: Objects need to change ids or react compile won't rerender.
+     * That means shallow copy object and arrays and whatever cloning methods are appropriate for other classes...
+     * Treat it as a react set state function returned by the useState hook. */
+    updateState: () => S
+  ): S => {
+    const [state, setStateInternal] = useState(updateState);
     useEffect(() => {
       return subscribe(getTarget, () => {
-        const result = callback?.();
-        if (result !== false) {
-          forceUpdate();
-        }
+        setStateInternal(updateState);
       });
     }, []);
+    return state;
   }
 };
 
