@@ -382,6 +382,34 @@ function proxify<T extends object>(obj: T, classesToProxify?: any[]) {
   return _proxifyInternal(obj, null, classesToProxify ? [...classesToProxify] : []) as T;
 }
 
+function deproxify<T>(obj: T): T {
+  if (!obj || typeof obj !== "object" || !(hidden in obj)) {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    const clone = [];
+    for (let i = 0; i < obj.length; i++) {
+      let v = obj[i];
+      if (v && typeof v === "object") {
+        v = deproxify(v);
+      }
+      clone[i] = v;
+    }
+    return clone as T;
+  } else {
+    const clone: any = {};
+    const keys = [...Object.getOwnPropertyNames(obj), ...Object.getOwnPropertySymbols(obj)];
+    for (const key of keys) {
+      let v = (obj as any)[key];
+      if (v && typeof v === "object") {
+        v = deproxify(v);
+      }
+      clone[key] = v;
+    }
+    return clone;
+  }
+}
+
 let _lastFound = false;
 function _subscribeInternal<T>(getTarget: () => T, callback: () => void, subscriptionData: any) {
   let found = false;
@@ -471,8 +499,16 @@ function _subscribeInternal<T>(getTarget: () => T, callback: () => void, subscri
   };
 }
 
-function subscribe<T>(getTarget: () => T, callback: () => void) {
+function subscribe(getTarget: () => any, callback: () => void) {
   return _subscribeInternal(getTarget, callback, {});
+}
+
+function subscribeMultiple(getTargets: (() => any)[], callback: () => void) {
+  const unsubs: (() => void)[] = [];
+  for (const getTarget of getTargets) {
+    unsubs.push(_subscribeInternal(getTarget, callback, {}));
+  }
+  return () => unsubs.forEach(unsub => unsub());
 }
 
 
@@ -486,8 +522,8 @@ const createReactHook = (
   useEffect: (effect: EffectCallback, deps?: DependencyList) => void,
   useState: <S>(initialState: S | (() => S)) => [S, Dispatch<SetStateAction<S>>]
 ) => {
-  return <T, S>(
-    getTarget: () => T,
+  return <S>(
+    getTarget: (() => any) | (() => any)[],
     /** Returns react state that will be used.
      * 
      * WARNING: Objects need to change ids or react compile won't rerender.
@@ -497,6 +533,11 @@ const createReactHook = (
   ): S => {
     const [state, setStateInternal] = useState(updateState);
     useEffect(() => {
+      if (Array.isArray(getTarget)) {
+        return subscribeMultiple(getTarget, () => {
+          setStateInternal(updateState);
+        });
+      }
       return subscribe(getTarget, () => {
         setStateInternal(updateState);
       });
@@ -507,7 +548,9 @@ const createReactHook = (
 
 export {
   proxify,
+  deproxify,
   subscribe,
+  subscribeMultiple,
   createReactHook
 }
 
@@ -518,4 +561,3 @@ export {
 // * handlers run bottom to top
 // * illegal mutations throw errors! (Can't react to a value change and change the value in the reaction)
 // * can handle cyclical structures
-
