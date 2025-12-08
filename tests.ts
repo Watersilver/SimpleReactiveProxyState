@@ -1,4 +1,4 @@
-import { proxify, subscribe } from ".";
+import { proxify, subscribe, deproxify } from ".";
 
 const tests = [
   {
@@ -89,6 +89,15 @@ const tests = [
 
       if (i !== 13) {
         throw Error("Eat shit");
+      }
+
+      const otherA = deproxify(a);
+
+      // Not a great test but whatever
+      if (JSON.stringify(a) !== JSON.stringify(otherA)) {
+        throw Error("Oh no");
+      } else {
+        console.log("deproxification successfull");
       }
     },
     title: 'nested'
