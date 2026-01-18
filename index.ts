@@ -249,6 +249,18 @@ function _proxifyInternal(obj: any, parent: object | null, classesToProxify: any
     }
     return obj;
   }
+  // Shallow copy to avoid the following scenario:
+  // 1. create an object and hold a reference to it
+  // 2. add it to some proxified object so it gets proxified
+  // 3. if proxification mutates instead of copying, `hidden` symbol gets added to it
+  // 4. add it again from the non proxified ref. Proxification will fail because `hidden`
+  //   is detected and we end up with a non proxified object, since detecting `hidden` is
+  //   how we detect our proxies.
+  if (Array.isArray(obj)) {
+    obj = [...obj];
+  } else {
+    obj = {...obj};
+  }
   obj[hidden] = {
     parents: [],
     original: obj,
@@ -400,6 +412,9 @@ function deproxify<T>(obj: T): T {
     const clone: any = {};
     const keys = [...Object.getOwnPropertyNames(obj), ...Object.getOwnPropertySymbols(obj)];
     for (const key of keys) {
+      if (key === hidden) {
+        console.log("BUG: holy shiet", obj)
+      }
       let v = (obj as any)[key];
       if (v && typeof v === "object") {
         v = deproxify(v);
@@ -561,3 +576,4 @@ export {
 // * handlers run bottom to top
 // * illegal mutations throw errors! (Can't react to a value change and change the value in the reaction)
 // * can handle cyclical structures
+
